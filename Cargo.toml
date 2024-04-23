@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/service-http",
+  "crates/service-api-frontend",
+]
+resolver = "2"
