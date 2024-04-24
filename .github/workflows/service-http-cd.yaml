@@ -1,0 +1,17 @@
+name: service-http CD
+on:
+  workflow_run:
+    workflows: ["http-service CI"]
+    types:
+      - completed
+
+jobs:
+  run-new-build:
+    runs-on: self-hosted
+    steps:
+      - name: Pull Docker image
+        run: sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/ip-info-service-http:latest
+      - name: Delete old docker container
+        run: docker rm -f ip-info-service-http-container || true
+      - name: Run new Docker container
+        run: docker run -d -p 3000:3000 --name ip-info-service-http-container ${{ secrets.DOCKERHUB_USERNAME }}/ip-info-service-http
