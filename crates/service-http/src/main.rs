@@ -23,7 +23,7 @@ async fn myip_get(
         }
     }
     dbg!(&accept_value, &ip);
-    "Hello from myip"
+    "Hello from myips"
 }
 
 #[tokio::main]

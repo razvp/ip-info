@@ -3,7 +3,7 @@ name: http-service CI
 on:
   push:
     branches: ["main"]
-    paths: ["crates/service-http"]
+    paths: ["crates/service-http/**"]
 
 jobs:
   build-and-deploy:
