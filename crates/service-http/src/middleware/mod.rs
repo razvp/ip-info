@@ -1,3 +1,3 @@
-mod add_header_ip;
+mod ensure_reverse_proxy;
 
-pub use add_header_ip::GetIPLayer;
+pub use ensure_reverse_proxy::EnsureReverseProxyLayer;

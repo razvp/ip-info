@@ -15,7 +15,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::{response::IntoResponse, routing::get, Router};
 
-use service_http::middleware::GetIPLayer;
+use service_http::middleware::EnsureReverseProxyLayer;
 
 #[derive(Debug)]
 struct ExtractForwardedIP(Ipv4Addr);
@@ -83,10 +83,7 @@ async fn main() {
         .route("/ip4", get(ip4))
         .route("/ip4/:ip", get(ip4))
         .route("/test", get(test))
-        // .layer(HandleErrorLayer::new(|| async { StatusCode::IM_A_TEAPOT }))
-        .layer(GetIPLayer);
-
-    // let app = Router::new().
+        .layer(EnsureReverseProxyLayer);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
