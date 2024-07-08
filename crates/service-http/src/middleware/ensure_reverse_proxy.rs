@@ -1,28 +1,42 @@
-use std::{future::Future, task::Poll};
+use std::{future::Future, net::Ipv4Addr, str::FromStr, task::Poll};
 
 use axum::{
     extract::Request,
-    http::StatusCode,
+    http::{HeaderName, StatusCode},
     response::{IntoResponse, Response},
 };
 use tower::{Layer, Service};
 
-use crate::HeaderIp;
+use crate::ClientIp;
 
 #[derive(Clone)]
-pub struct EnsureReverseProxyLayer;
+pub struct EnsureReverseProxyLayer {
+    header: &'static HeaderName,
+}
+
+impl EnsureReverseProxyLayer {
+    pub fn new(header: impl AsRef<str>) -> Self {
+        let header = HeaderName::from_str(header.as_ref()).unwrap();
+        let header: &'static HeaderName = Box::leak(Box::new(header));
+        Self { header }
+    }
+}
 
 impl<S> Layer<S> for EnsureReverseProxyLayer {
     type Service = EnsureReverseProxy<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        EnsureReverseProxy { inner }
+        EnsureReverseProxy {
+            inner,
+            header: self.header,
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct EnsureReverseProxy<S> {
     inner: S,
+    header: &'static HeaderName,
 }
 
 impl<S> Service<Request> for EnsureReverseProxy<S>
@@ -31,7 +45,7 @@ where
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = EnsureReverseProxyFuture<S::Future>;
+    type Future = ResponseFuture<S::Future>;
 
     fn poll_ready(
         &mut self,
@@ -41,35 +55,88 @@ where
     }
 
     fn call(&mut self, mut req: Request) -> Self::Future {
-        let ext = req.extensions_mut();
-        ext.insert(HeaderIp("teeeest_ip".to_string()));
-
-        EnsureReverseProxyFuture {
-            future: self.inner.call(req),
+        match set_ip_extension_or_return_error_response(&mut req, self.header) {
+            // ClientIp has been set as extension on the request
+            // and the request is passed to the next layer
+            Ok(_) => ResponseFuture::Continue {
+                future: self.inner.call(req),
+            },
+            // Couldn't find one valid IP set by the reverse proxy
+            // so the requests stops at this layer and we respond to the client
+            Err(response) => ResponseFuture::Stop { response },
         }
     }
 }
 
 pin_project_lite::pin_project! {
-    pub struct EnsureReverseProxyFuture<F> {
-        #[pin]
-        future: F,
+    #[project = EnumProj]
+    pub enum ResponseFuture<F> {
+        Stop {
+            response: (StatusCode, &'static str)
+        },
+        Continue {
+            #[pin]
+            future: F
+        }
     }
-
 }
 
-impl<F, E> Future for EnsureReverseProxyFuture<F>
+impl<F, E> Future for ResponseFuture<F>
 where
     F: Future<Output = Result<Response, E>>,
 {
     type Output = F::Output;
 
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
+        match this {
+            EnumProj::Stop { response } => Poll::Ready(Ok(response.into_response())),
+            EnumProj::Continue { future } => future.poll(cx),
+        }
+    }
+}
 
-        Poll::Ready(Ok(StatusCode::IM_A_TEAPOT.into_response()))
+fn set_ip_extension_or_return_error_response(
+    req: &mut Request,
+    header: &HeaderName,
+) -> Result<(), (StatusCode, &'static str)> {
+    let ips: Result<Vec<_>, _> = req
+        .headers()
+        .get_all(header)
+        .iter()
+        .map(|hv| {
+            let ip = hv
+                .to_str()
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "Value in reverse proxy header is not UTF-8",
+                    )
+                })?
+                .parse::<Ipv4Addr>()
+                .map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "Value in reverse proxy header is not an IPv4",
+                    )
+                })?;
+            Ok::<Ipv4Addr, (StatusCode, &'static str)>(ip)
+        })
+        .collect();
+    let ips = ips?;
+
+    match ips.len() {
+        1 => {
+            req.extensions_mut().insert(ClientIp(ips[0]));
+            Ok(())
+        }
+        0 => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Expected reverse proxy header",
+        )),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            "More than one IP in reverse proxy header",
+        )),
     }
 }

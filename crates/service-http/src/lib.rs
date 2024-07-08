@@ -1,4 +1,6 @@
+use std::net::Ipv4Addr;
+
 pub mod middleware;
 
 #[derive(Clone, Debug)]
-pub struct HeaderIp(String);
+pub struct ClientIp(pub Ipv4Addr);
