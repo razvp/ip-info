@@ -1,12 +1,13 @@
-use std::{future::Future, net::Ipv4Addr, str::FromStr, task::Poll};
+use std::{net::Ipv4Addr, str::FromStr};
 
 use axum::{
     extract::Request,
     http::{HeaderName, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use tower::{Layer, Service};
 
+use super::util::ResponseFuture;
 use crate::ClientIp;
 
 #[derive(Clone)]
@@ -64,34 +65,6 @@ where
             // Couldn't find one valid IP set by the reverse proxy
             // so the requests stops at this layer and we respond to the client
             Err(response) => ResponseFuture::Stop { response },
-        }
-    }
-}
-
-pin_project_lite::pin_project! {
-    #[project = EnumProj]
-    pub enum ResponseFuture<F> {
-        Stop {
-            response: (StatusCode, &'static str)
-        },
-        Continue {
-            #[pin]
-            future: F
-        }
-    }
-}
-
-impl<F, E> Future for ResponseFuture<F>
-where
-    F: Future<Output = Result<Response, E>>,
-{
-    type Output = F::Output;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this {
-            EnumProj::Stop { response } => Poll::Ready(Ok(response.into_response())),
-            EnumProj::Continue { future } => future.poll(cx),
         }
     }
 }
